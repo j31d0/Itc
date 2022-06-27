@@ -13,7 +13,7 @@ import reader.{
 import scala.Console.{MAGENTA => M, CYAN => C, YELLOW => Y, RED => R, RESET}
 
 object Main:
-  val typeSystem = "ST"
+  val typeSystem = "F2"
 
   val name = s"Itc_${typeSystem}"
   def prompt(pname: String) = s"\n$M$pname>$RESET "
@@ -42,6 +42,9 @@ object Main:
 
     var globalEnv: Map[String, Expr] = Map()
     var globalTenv: Map[String, Type] = Map()
+
+    var globalTTenv: Map[String, Type] = Map()
+    var globalTKenv: Map[String, Kind] = Map()
     for (str <- strs(name).takeWhile(s => !eof(s)) if str.trim.nonEmpty) {
       val opt = lift {
         val cmd = Command(str)
@@ -52,7 +55,8 @@ object Main:
       opt.foreach(cmd =>
         cmd match {
           case Command.Let(s, e) =>
-            if globalTenv contains s then println(s" $s already exists.")
+            if (globalTenv contains s) || (globalTKenv contains s) then
+              println(s" $s already exists.")
             else
               TypeCheck(globalTenv, e) match {
                 case None => println("TypeCheck fail")
@@ -63,12 +67,30 @@ object Main:
                 }
               }
 
+          case Command.LetType(s, k, t) =>
+            if (globalTenv contains s) || (globalTKenv contains s) then
+              println(s" $s already exists.")
+            else {
+              KindCheck(globalTKenv, t) match {
+                case None => println("KindCheck fail")
+                case Some(k2) => {
+                  if (k == k2) then
+                    globalTTenv += (s -> t)
+                    globalTKenv += (s -> k)
+                    println(s" $s = $t : $k defined.")
+                  else
+                    println(s"kind $k is different to ${k2}.")
+                }
+              }
+            }
+
           case Command.Definition(s, ty) =>
-            if globalTenv contains s then println(s" $s already exists.")
+            if (globalTenv contains s) || (globalTKenv contains s) then
+              println(s" $s already exists.")
             else
-              val ictx = Context(Map(), (0, ty))
+              val ictx = Context(Map(), Map(), (0, ty))
               val ihe = HoleExpr.Hole(0, ty)
-              proof(reader, s, List(ictx), ihe, globalTenv) match {
+              proof(reader, s, List(ictx), ihe, globalTTenv, globalTenv) match {
                 case Some(e) => {
                   globalEnv += (s -> e)
                   globalTenv += (s -> ty)
@@ -79,7 +101,11 @@ object Main:
           case Command.Print(s) =>
             (globalTenv.lift(s), globalEnv.lift(s)) match {
               case (Some(t), Some(e)) => println(s" $s = $e : $t")
-              case _ => println(s" $s is not exists.")
+              case _ =>
+                (globalTKenv.lift(s), globalTTenv.lift(s)) match {
+                  case (Some(k), Some(t)) => println(s" $s = $t : $k")
+                  case _                  => println(s" $s is not exists.")
+                }
             }
         }
       )
@@ -90,6 +116,7 @@ object Main:
       name: String,
       ctxs: List[Context],
       he: HoleExpr,
+      globalTalias: Map[String, Type],
       globalTenv: Map[String, Type]
   ): Option[Expr] = {
     ctxs match {
@@ -115,18 +142,27 @@ object Main:
           if (ctxs.length == 0) he.toExpr
           else {
             println(" There are unresolved subgoals.");
-            proof(reader, name, ctxs, he, globalTenv)
+            proof(reader, name, ctxs, he, globalTalias, globalTenv)
           }
         case Some(t) =>
           ctxs match {
             case ctx :: ts =>
-              Tactic.manipulate(t, globalTenv, ctx, he) match {
-                case None             => proof(reader, name, ctxs, he, globalTenv)
-                case Some(nctxs, nhe) => proof(reader, name, nctxs ++ ts, nhe, globalTenv)
+              Tactic.manipulate(t, globalTalias, globalTenv, ctx, he) match {
+                case None =>
+                  proof(reader, name, ctxs, he, globalTalias, globalTenv)
+                case Some(nctxs, nhe) =>
+                  proof(
+                    reader,
+                    name,
+                    nctxs ++ ts,
+                    nhe,
+                    globalTalias,
+                    globalTenv
+                  )
               }
-            case Nil => proof(reader, name, ctxs, he, globalTenv)
+            case Nil => proof(reader, name, ctxs, he, globalTalias, globalTenv)
           }
-        case None => proof(reader, name, ctxs, he, globalTenv)
+        case None => proof(reader, name, ctxs, he, globalTalias, globalTenv)
       }
   }
 
