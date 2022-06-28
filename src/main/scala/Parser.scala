@@ -19,7 +19,7 @@ object Parser extends RegexParsers:
     "false",
     "fun"
   )
-  lazy val tKeywords = Set("Int", "Boolean", "Type", "forall")
+  lazy val tKeywords = Set("Int", "Boolean", "Type", "forall", "fun")
 
   private lazy val n: Parser[BigInt] = "-?[0-9]+".r ^^ BigInt.apply
   private lazy val b: Parser[Boolean] = "true" ^^^ true | "false" ^^^ false
@@ -37,7 +37,7 @@ object Parser extends RegexParsers:
     }
   private lazy val etfun: Parser[TFun] =
     (("fun" ~> wrapR((tx <~ ":") ~ kparser) <~ "=>") ~ eparser) ^^ {
-      case (name ~ kind) ~ b => TFun(name, b)
+      case (name ~ kind) ~ b => TFun(name, kind, b)
     }
 
   private lazy val e0: Parser[Expr] =
@@ -68,28 +68,46 @@ object Parser extends RegexParsers:
   private lazy val tint: Parser[IntT.type] = "Int" ^^^ IntT
   private lazy val tboolean: Parser[BooleanT.type] = "Boolean" ^^^ BooleanT
   private lazy val tid: Parser[IdT] = tx ^^ IdT.apply
+  private lazy val tuniv: Parser[UnivT] =
+    ("forall" ~> wrapR((tx <~ ":") ~ kparser) <~ ",") ~ tparser ^^ { case (x ~ k) ~ t =>
+      UnivT(x, k, t)
+    }
   private lazy val tfun: Parser[FunT] =
-    ("forall" ~> wrapR(tx <~ ":" <~ kparser) <~ ",") ~ tparser ^^ { case x ~ t =>
-      FunT(x, t)
+    (("fun" ~> wrapR((tx <~ ":") ~ kparser) <~ "=>") ~ tparser) ^^ {
+      case (name ~ kind) ~ b => FunT(name, kind, b)
     }
 
   private lazy val t0: Parser[Type] =
       tid |
       tint |
       tboolean |
+      tuniv |
       tfun |
       wrapR(tparser)
 
   private lazy val t1: Parser[Type] =
-    rep1sep(t0, "->") ^^ {
+    rep1(t0) ^^ { case ts => ts.reduceLeft(Type.AppT.apply) }
+
+  private lazy val t2: Parser[Type] =
+    rep1sep(t1, "->") ^^ {
       case t0 :: Nil => t0
       case ts        => ts.reduceRight(Type.ArrowT.apply)
     }
-  lazy val tparser: Parser[Type] = t1
+  lazy val tparser: Parser[Type] = t2
 
 
-  private lazy val kdot: Parser[Kind.DotKind.type] = "Type" ^^^ DotKind
-  lazy val kparser: Parser[Kind] = kdot
+  private lazy val kprop: Parser[Kind.ProperK.type] = "Type" ^^^ ProperK
+
+  private lazy val k0: Parser[Kind] =
+    kprop |
+    wrapR(kparser)
+  private lazy val k1: Parser[Kind] =
+    rep1sep(k0, "->") ^^ {
+      case k0 :: Nil => k0
+      case ks => ks.reduceRight(Kind.ArrowK.apply)
+    }
+
+  lazy val kparser: Parser[Kind] = k1
 
   private lazy val clet: Parser[Let] =
     ("Definition" ~> x <~ ":=") ~ (eparser <~ ".") ^^ { case (s ~ e) =>
@@ -113,8 +131,10 @@ object Parser extends RegexParsers:
     ("apply" ~> eparser <~ ".") ^^ Tactic.Apply.apply
   private lazy val tacunfold: Parser[Tactic.Unfold] =
     ("unfold" ~> tx) ~ opt("in" ~> tx) <~ "." ^^ { case x ~ h => Tactic.Unfold(x, h)}
+  private lazy val taccbv: Parser[Tactic.Cbv] =
+    "cbv" ~> opt("in" ~> tx) <~ "." ^^ Tactic.Cbv.apply
   private lazy val tacdefined: Parser[Tactic.Defined.type] =
     "Defined" <~ "." ^^^ Tactic.Defined
 
-  lazy val tacparser: Parser[Tactic] = tacintro | tacapply | tacunfold | tacdefined
+  lazy val tacparser: Parser[Tactic] = tacintro | tacapply | tacunfold | taccbv | tacdefined
 end Parser

@@ -4,6 +4,7 @@ enum Tactic:
   case Intro(x: String) extends Tactic
   case Apply(e: Expr) extends Tactic
   case Unfold(x: String, h: Option[String]) extends Tactic
+  case Cbv(h: Option[String]) extends Tactic
   case Defined extends Tactic
 end Tactic
 object Tactic:
@@ -12,6 +13,7 @@ object Tactic:
     .getOrElse(Parser.error("Tactic parse fail"))
   def manipulate(
       t: Tactic,
+      gKenv: Map[String, Kind],
       gTalias: Map[String, Type],
       gTenv: Map[String, Type],
       ctx: Context,
@@ -27,19 +29,19 @@ object Tactic:
               HoleExpr.Fun(x, p, HoleExpr.Hole(ctx.target._1, r))
             )
           )
-        case Type.FunT(y, b) =>
+        case Type.UnivT(y, k, b) =>
           val newb = b.alpha(y, x)
           Some(
-            List(Context(ctx.kenv + (x -> Kind.DotKind), ctx.tenv, (ctx.target._1, newb))),
+            List(Context(ctx.kenv + (x -> k), ctx.tenv, (ctx.target._1, newb))),
             he.replace(
               ctx.target._1,
-              HoleExpr.TFun(x, HoleExpr.Hole(ctx.target._1, newb))
+              HoleExpr.TFun(x, k, HoleExpr.Hole(ctx.target._1, newb))
             )
           )
         case _ => { println(s"${ctx.target._2} is not arrowT"); None }
       }
     case Apply(e) =>
-      TypeCheck(gTenv ++ ctx.tenv.toMap, e) match {
+      TypeCheck(gKenv ++ ctx.kenv.toMap, gTenv ++ ctx.tenv.toMap, e) match {
         case Some(ty) =>
             def aux(tyctx: Type, tyapply: Type): Option[List[Type]] =
                 if (tyctx == tyapply) Some(Nil)
@@ -68,6 +70,14 @@ object Tactic:
         }
         case None => None
       }
+    case Cbv(h) =>
+      h match {
+        case Some(h1) => ctx.tenv.lift(h1) match {
+            case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.tinterp(th)))), he))
+            case None => None
+          }
+          case None => Some((List(ctx.copy(target = (ctx.target._1, TypeCheck.tinterp(ctx.target._2)))), he))
+        }
     case Defined => None
   }
 end Tactic

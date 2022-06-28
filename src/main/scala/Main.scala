@@ -13,7 +13,7 @@ import reader.{
 import scala.Console.{MAGENTA => M, CYAN => C, YELLOW => Y, RED => R, RESET}
 
 object Main:
-  val typeSystem = "F2"
+  val typeSystem = "Fw"
 
   val name = s"Itc_${typeSystem}"
   def prompt(pname: String) = s"\n$M$pname>$RESET "
@@ -58,7 +58,7 @@ object Main:
             if (globalTenv contains s) || (globalTKenv contains s) then
               println(s" $s already exists.")
             else
-              TypeCheck(globalTenv, e) match {
+              TypeCheck(globalTKenv, globalTenv, e) match {
                 case None => println("TypeCheck fail")
                 case Some(t) => {
                   globalEnv += (s -> e)
@@ -78,8 +78,7 @@ object Main:
                     globalTTenv += (s -> t)
                     globalTKenv += (s -> k)
                     println(s" $s = $t : $k defined.")
-                  else
-                    println(s"kind $k is different to ${k2}.")
+                  else println(s"kind $k is different to ${k2}.")
                 }
               }
             }
@@ -88,15 +87,28 @@ object Main:
             if (globalTenv contains s) || (globalTKenv contains s) then
               println(s" $s already exists.")
             else
-              val ictx = Context(Map(), Map(), (0, ty))
-              val ihe = HoleExpr.Hole(0, ty)
-              proof(reader, s, List(ictx), ihe, globalTTenv, globalTenv) match {
-                case Some(e) => {
-                  globalEnv += (s -> e)
-                  globalTenv += (s -> ty)
-                  println(s" $s: $ty defined.")
+              KindCheck(globalTKenv, ty) match {
+                case Some(Kind.ProperK) => {
+                  val ictx = Context(Map(), Map(), (0, ty))
+                  val ihe = HoleExpr.Hole(0, ty)
+                  proof(
+                    reader,
+                    s,
+                    List(ictx),
+                    ihe,
+                    globalTKenv,
+                    globalTTenv,
+                    globalTenv
+                  ) match {
+                    case Some(e) => {
+                      globalEnv += (s -> e)
+                      globalTenv += (s -> ty)
+                      println(s" $s: $ty defined.")
+                    }
+                    case None => println(s" $s removed.")
+                  }
                 }
-                case None => println(s" $s removed.")
+                case _ => println("KindCheck fail")
               }
           case Command.Print(s) =>
             (globalTenv.lift(s), globalEnv.lift(s)) match {
@@ -116,6 +128,7 @@ object Main:
       name: String,
       ctxs: List[Context],
       he: HoleExpr,
+      globalTKenv: Map[String, Kind],
       globalTalias: Map[String, Type],
       globalTenv: Map[String, Type]
   ): Option[Expr] = {
@@ -142,27 +155,53 @@ object Main:
           if (ctxs.length == 0) he.toExpr
           else {
             println(" There are unresolved subgoals.");
-            proof(reader, name, ctxs, he, globalTalias, globalTenv)
+            proof(reader, name, ctxs, he, globalTKenv, globalTalias, globalTenv)
           }
         case Some(t) =>
           ctxs match {
             case ctx :: ts =>
-              Tactic.manipulate(t, globalTalias, globalTenv, ctx, he) match {
+              Tactic.manipulate(
+                t,
+                globalTKenv,
+                globalTalias,
+                globalTenv,
+                ctx,
+                he
+              ) match {
                 case None =>
-                  proof(reader, name, ctxs, he, globalTalias, globalTenv)
+                  proof(
+                    reader,
+                    name,
+                    ctxs,
+                    he,
+                    globalTKenv,
+                    globalTalias,
+                    globalTenv
+                  )
                 case Some(nctxs, nhe) =>
                   proof(
                     reader,
                     name,
                     nctxs ++ ts,
                     nhe,
+                    globalTKenv,
                     globalTalias,
                     globalTenv
                   )
               }
-            case Nil => proof(reader, name, ctxs, he, globalTalias, globalTenv)
+            case Nil =>
+              proof(
+                reader,
+                name,
+                ctxs,
+                he,
+                globalTKenv,
+                globalTalias,
+                globalTenv
+              )
           }
-        case None => proof(reader, name, ctxs, he, globalTalias, globalTenv)
+        case None =>
+          proof(reader, name, ctxs, he, globalTKenv, globalTalias, globalTenv)
       }
   }
 
