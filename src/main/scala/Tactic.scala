@@ -5,6 +5,7 @@ enum Tactic:
   case Apply(e: Expr) extends Tactic
   case Unfold(x: String, h: Option[String]) extends Tactic
   case Cbv(h: Option[String]) extends Tactic
+  case Cbn(h: Option[String]) extends Tactic
   case Defined extends Tactic
 end Tactic
 object Tactic:
@@ -13,54 +14,45 @@ object Tactic:
     .getOrElse(Parser.error("Tactic parse fail"))
   def manipulate(
       t: Tactic,
-      gKenv: Map[String, Kind],
-      gTalias: Map[String, Type],
-      gTenv: Map[String, Type],
+      gTenv: Map[String, Expr],
+      gEnv: Map[String, Expr],
       ctx: Context,
       he: HoleExpr
   ): Option[(List[Context], HoleExpr)] = t match {
     case Intro(x) =>
       ctx.target._2 match {
-        case Type.ArrowT(p, r) =>
-          Some(
-            List(Context(ctx.kenv, ctx.tenv + (x -> p), (ctx.target._1, r))),
-            he.replace(
-              ctx.target._1,
-              HoleExpr.Fun(x, p, HoleExpr.Hole(ctx.target._1, r))
-            )
-          )
-        case Type.UnivT(y, k, b) =>
+        case Expr.Univ(y, k, b) =>
           val newb = b.alpha(y, x)
           Some(
-            List(Context(ctx.kenv + (x -> k), ctx.tenv, (ctx.target._1, newb))),
+            List(Context(ctx.tenv + (x -> k), (ctx.target._1, newb))),
             he.replace(
               ctx.target._1,
-              HoleExpr.TFun(x, k, HoleExpr.Hole(ctx.target._1, newb))
+              HoleExpr.Fun(x, k, HoleExpr.Hole(ctx.target._1, newb))
             )
           )
-        case _ => { println(s"${ctx.target._2} is not arrowT"); None }
+        case _ => { println(s"${ctx.target._2} is not Univ"); None }
       }
     case Apply(e) =>
-      TypeCheck(gKenv ++ ctx.kenv.toMap, gTenv ++ ctx.tenv.toMap, e) match {
+      TypeCheck(gTenv ++ ctx.tenv.toMap, e) match {
         case Some(ty) =>
-            def aux(tyctx: Type, tyapply: Type): Option[List[Type]] =
+            def aux(tyctx: Expr, tyapply: Expr): Option[List[Expr]] =
                 if (tyctx == tyapply) Some(Nil)
                 else tyapply match {
-                    case Type.ArrowT(p, r) => aux(tyctx, r).map((l) => p :: l)
+                    case Expr.Univ(p, k, r) => aux(tyctx, r).map((l) => k :: l)
                     case _ => None
                 }
             aux(ctx.target._2, ty) match
                 case None => {println(s"$e is not applicable"); None }
                 case Some(ts) =>
-                    val tnums = if (ts.length == 0) Nil else (ctx.target._1 :: he.freshes(ts.length - 1))
+                    val tnums = if (ts.length == 0) Nil else (ctx.target._1 :: he.freshTargets(ts.length - 1))
                     val targets = tnums zip ts
-                    val contexts = targets.map((v) => Context(ctx.kenv, ctx.tenv, v))
+                    val contexts = targets.map((v) => Context(ctx.tenv, v))
                     val nhole = he.replace(ctx.target._1, targets.foldLeft(e.toHole){ case (e, (n, t)) => HoleExpr.App(e, HoleExpr.Hole(n, t))})
                     Some((contexts, nhole))
         case None     => { println(s"$e does not type checks"); None }
       }
     case Unfold(x, h) =>
-      gTalias.lift(x) match {
+      gEnv.lift(x) match {
         case Some(t) => h match {
           case Some(h1) => ctx.tenv.lift(h1) match {
             case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.subst(th, x, t)))), he))
@@ -73,11 +65,20 @@ object Tactic:
     case Cbv(h) =>
       h match {
         case Some(h1) => ctx.tenv.lift(h1) match {
-            case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.tinterp(th)))), he))
+            case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.interp(th)))), he))
             case None => None
           }
-          case None => Some((List(ctx.copy(target = (ctx.target._1, TypeCheck.tinterp(ctx.target._2)))), he))
+          case None => Some((List(ctx.copy(target = (ctx.target._1, TypeCheck.interp(ctx.target._2)))), he))
         }
+    case Cbn(h) =>
+      h match {
+        case Some(h1) => ctx.tenv.lift(h1) match {
+            case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.cbn(th)))), he))
+            case None => None
+          }
+          case None => Some((List(ctx.copy(target = (ctx.target._1, TypeCheck.cbn(ctx.target._2)))), he))
+        }
+
     case Defined => None
   }
 end Tactic

@@ -1,71 +1,88 @@
 package itc
 
 object TypeCheck:
-  def apply(kenv: Map[String, Kind], tenv: Map[String, Type], e: Expr): Option[Type] = e match
-    case Expr.Int(_)  => Some(Type.IntT)
-    case Expr.Bool(_) => Some(Type.BooleanT)
+  def apply(tenv: Map[String, Expr], e: Expr): Option[Expr] = e match
+    case Expr.Type => None
+    case Expr.Prop => Some(Expr.Type)
+    case Expr.Int(_)  => Some(Expr.IntT)
+    case Expr.Bool(_) => Some(Expr.BooleanT)
+    case Expr.IntT => Some(Expr.Type)
+    case Expr.BooleanT => Some(Expr.Type)
     case Expr.Fun(x, t, e) =>
-      KindCheck.apply(kenv, t) match
-        case Some(Kind.ProperK) =>
-          apply(kenv, tenv + (x -> t), e) match
-          case Some(a) => Some(Type.ArrowT(t, a))
+      TypeCheck.apply(tenv, t) match
+        case Some(_) =>
+          apply(tenv + (x -> t), e) match
+          case Some(b) => Some(Expr.Univ(x, t, b))
           case None    => None
         case _ => None
+    case Expr.Univ(x, t, e) =>
+      TypeCheck.apply(tenv, t) match
+        case Some(_) =>
+          apply(tenv + (x -> t), e) match
+            case Some(l) => Some(l)
+            case None => None
+        case _ => None
     case Expr.App(e1, e2) =>
-      apply(kenv, tenv, e1) match
-        case Some(Type.ArrowT(p, r)) =>
-          apply(kenv, tenv, e2) match
-            case Some(a) => if (equiv(p, a)) Some(r) else None
+      apply(tenv, e1) match
+        case Some(Expr.Univ(x, t, b)) =>
+          apply(tenv, e2) match
+            case Some(a) => if (equiv(interp(t), a)) Some(interp(subst(b, x, e2))) else None
             case _       => None
         case _ => None
     case Expr.Id(x) => tenv.lift(x)
-    case Expr.TApp(e1, t) =>
-      apply(kenv, tenv, e1) match
-        case Some(Type.UnivT(x, k, tb)) => Some(subst(tb, x, t))
-        case _                          => None
-    case Expr.TFun(x, k, b) =>
-      apply(kenv + (x -> k), tenv, b) match
-        case Some(a) => Some(Type.UnivT(x, k, a))
-        case None    => None
 
-  def fresh(s: Set[String]): String =
+  def fresh(s: Set[String], prefix: String): String =
+    val nprefix = prefix.takeWhile((c) => !c.isDigit)
     def aux(n: Int): String =
-      if (!(s contains s"a$n")) s"a$n" else aux(n+1)
+      if (!(s contains s"$nprefix$n")) s"$nprefix$n" else aux(n+1)
     aux(0)
 
-  def equiv(t1: Type, t2: Type): Boolean = (t1, t2) match
-    case (Type.FunT(s1, _, b1), Type.FunT(s2, _, b2)) =>
-      val s3 = fresh(b1.frees ++ b2.frees)
+  def equiv(t1: Expr, t2: Expr): Boolean = (t1, t2) match
+    case (Expr.Fun(s1, _, b1), Expr.Fun(s2, _, b2)) =>
+      val s3 = fresh(b1.frees ++ b2.frees, "A")
       equiv(b1.alpha(s1, s3), b2.alpha(s2, s3))
-    case (Type.UnivT(s1, _, b1), Type.UnivT(s2, _, b2)) =>
-      val s3 = fresh(b1.frees ++ b2.frees)
+    case (Expr.Univ(s1, _, b1), Expr.Univ(s2, _, b2)) =>
+      val s3 = fresh(b1.frees ++ b2.frees, "A")
       equiv(b1.alpha(s1, s3), b2.alpha(s2, s3))
-    case (Type.IdT(s1), Type.IdT(s2)) => s1 == s2
-    case (Type.ArrowT(p1, r1), Type.ArrowT(p2, r2)) => equiv(p1, p2) && equiv(r1, r2)
-    case (Type.IntT, Type.IntT) => true
-    case (Type.BooleanT, Type.BooleanT) => true
+    case (Expr.Id(s1), Expr.Id(s2)) => s1 == s2
+    case (Expr.IntT, Expr.IntT) => true
+    case (Expr.BooleanT, Expr.BooleanT) => true
+    case (Expr.Int(n1), Expr.Int(n2)) => n1 == n2
+    case (Expr.Bool(b1), Expr.Bool(b2)) => b1 == b2
+    case (Expr.Prop, Expr.Prop) => true
+    case (Expr.Type, Expr.Type) => true
     case _ => false
 
-  def subst(tb: Type, x: String, t: Type): Type = tb match
-    case Type.AppT(t1, t2) => Type.AppT(subst(t1, x, t), subst(t2, x, t))
-    case Type.FunT(s, k, b) => if s == x then tb else
-      val s3 = fresh(b.frees ++ t.frees + s)
-      Type.FunT(s3, k, subst(b.alpha(s, s3), x, t))
-    case Type.UnivT(s, k, b) => if s == x then tb else
-      val s3 = fresh(b.frees ++ t.frees + s)
-      Type.UnivT(s3, k, subst(b.alpha(s, s3), x, t))
-    case Type.IdT(s) => if s == x then t else tb
-    case Type.ArrowT(p, r) => Type.ArrowT(subst(p, x, t), subst(r, x, t))
-    case Type.IntT => Type.IntT
-    case Type.BooleanT => Type.BooleanT
+  def subst(tb: Expr, x: String, t: Expr): Expr = tb match
+    case Expr.App(t1, t2) => Expr.App(subst(t1, x, t), subst(t2, x, t))
+    case Expr.Fun(s, k, b) => if s == x then Expr.Fun(s, subst(k, x, t), b) else
+      val avoidSet = k.frees ++ b.bindings ++ b.frees ++ t.frees
+      val s3 = if (avoidSet contains s) fresh(k.frees ++ b.bindings ++ b.frees ++ t.frees, s) else s
+      Expr.Fun(s3, subst(k, x, t), subst(b.alpha(s, s3), x, t))
+    case Expr.Univ(s, k, b) => if s == x then Expr.Univ(s, subst(k, x, t), b) else
+      val avoidSet = k.frees ++ b.bindings ++ b.frees ++ t.frees
+      val s3 = if (avoidSet contains s) fresh(k.frees ++ b.bindings ++ b.frees ++ t.frees, s) else s
+      Expr.Univ(s3, subst(k, x, t), subst(b.alpha(s, s3), x, t))
+    case Expr.Id(s) => if s == x then t else tb
+    case Expr.IntT | Expr.BooleanT | Expr.Prop | Expr.Type | Expr.Int(_) | Expr.Bool(_) => tb
 
 
-  def tinterp(tb: Type): Type = tb match
-    case Type.AppT(t1, t2) =>
-      val t1a = tinterp(t1)
+  def interp(tb: Expr): Expr = tb match
+    case Expr.App(t1, t2) =>
+      val t1a = interp(t1)
       t1a match
-        case Type.FunT(s, k, b) => tinterp(subst(b, s, t2))
-        case _ => Type.AppT(t1a, t2)
+        case Expr.Fun(s, k, b) => interp(subst(b, s, t2))
+        case _ => Expr.App(t1a, t2)
     case _ => tb
+  
+  def cbn (tb: Expr): Expr = tb match
+    case Expr.App(t1, t2) =>
+      val t1a = cbn(t1)
+      t1a match
+        case Expr.Fun(s, k, b) => cbn(subst(b, s, t2))
+        case _ => Expr.App(t1a, cbn(t2))
+    case Expr.Fun(s, k, b) => Expr.Fun(s, cbn(k), cbn(b))
+    case Expr.Univ(s, k, b) => Expr.Univ(s, cbn(k), cbn(b))
+    case Expr.Id(_) | Expr.IntT | Expr.BooleanT | Expr.Prop | Expr.Type | Expr.Int(_) | Expr.Bool(_) => tb
 
 end TypeCheck
