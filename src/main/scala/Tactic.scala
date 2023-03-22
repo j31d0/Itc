@@ -33,7 +33,7 @@ object Tactic:
         case _ => { println(s"${ctx.target._2} is not Univ"); None }
       }
     case Apply(e) =>
-      TypeCheck(gTenv ++ ctx.tenv.toMap, e) match {
+      TypeCheck(gTenv ++ ctx.tenv.toMap, gEnv, e) match {
         case Some(ty) =>
             def aux(tyctx: Expr, tyapply: Expr): Option[List[Expr]] =
                 if (tyctx == tyapply) Some(Nil)
@@ -65,10 +65,10 @@ object Tactic:
     case Cbv(h) =>
       h match {
         case Some(h1) => ctx.tenv.lift(h1) match {
-            case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.interp(th)))), he))
+            case Some(th) => Some((List(ctx.copy(tenv = ctx.tenv.updated(h1, TypeCheck.interp(Map(), th)))), he))
             case None => None
           }
-          case None => Some((List(ctx.copy(target = (ctx.target._1, TypeCheck.interp(ctx.target._2)))), he))
+          case None => Some((List(ctx.copy(target = (ctx.target._1, TypeCheck.interp(Map(), ctx.target._2)))), he))
         }
     case Cbn(h) =>
       h match {

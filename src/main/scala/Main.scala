@@ -56,7 +56,7 @@ object Main:
             if (globalTenv contains s) then
               println(s" $s already exists.")
             else
-              TypeCheck(globalTenv, e) match {
+              TypeCheck(globalTenv, globalEnv, e) match {
                 case None => println("TypeCheck fail")
                 case Some(t) => {
                   globalEnv += (s -> e)
@@ -69,7 +69,7 @@ object Main:
             if (globalTenv contains s) then
               println(s" $s already exists.")
             else
-              TypeCheck(globalTenv, ty) match {
+              TypeCheck(globalTenv, globalEnv, ty) match {
                 case Some(_) => {
                   val ictx = Context(Map(), (0, ty))
                   val ihe = HoleExpr.Hole(0, ty)
@@ -82,7 +82,7 @@ object Main:
                     globalEnv,
                   ) match {
                     case Some(e) => {
-                      if (TypeCheck(globalTenv, e).isEmpty) println(" warning: TypeCheck fail on whole expression")
+                      if (TypeCheck(globalTenv, globalEnv, e).isEmpty) println(" warning: TypeCheck fail on whole expression")
                       globalEnv += (s -> e)
                       globalTenv += (s -> ty)
                       println(s" $s: $ty defined.")

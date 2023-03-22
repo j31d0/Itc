@@ -1,7 +1,7 @@
 package itc
 
 object TypeCheck:
-  def apply(tenv: Map[String, Expr], e: Expr): Option[Expr] = e match
+  def apply(tenv: Map[String, Expr], env: Map[String, Expr], e: Expr): Option[Expr] = e match
     case Expr.Type => None
     case Expr.Prop => Some(Expr.Type)
     case Expr.Int(_)  => Some(Expr.IntT)
@@ -9,24 +9,24 @@ object TypeCheck:
     case Expr.IntT => Some(Expr.Type)
     case Expr.BooleanT => Some(Expr.Type)
     case Expr.Fun(x, t, e) =>
-      TypeCheck.apply(tenv, t) match
+      TypeCheck.apply(tenv, env, t) match
         case Some(_) =>
-          apply(tenv + (x -> t), e) match
+          apply(tenv + (x -> t), env + (x -> Expr.Id(x)), e) match
           case Some(b) => Some(Expr.Univ(x, t, b))
           case None    => None
         case _ => None
     case Expr.Univ(x, t, e) =>
-      TypeCheck.apply(tenv, t) match
+      TypeCheck.apply(tenv, env, t) match
         case Some(_) =>
-          apply(tenv + (x -> t), e) match
+          apply(tenv + (x -> t), env + (x -> Expr.Id(x)), e) match
             case Some(l) => Some(l)
             case None => None
         case _ => None
     case Expr.App(e1, e2) =>
-      apply(tenv, e1) match
+      apply(tenv, env, e1).map((p) => interp(env, p)) match
         case Some(Expr.Univ(x, t, b)) =>
-          apply(tenv, e2) match
-            case Some(a) => if (equiv(interp(t), a)) Some(interp(subst(b, x, e2))) else None
+          apply(tenv, env, e2) match
+            case Some(a) => if (equiv(interp(env, t), interp(env, a))) Some(interp(env, subst(b, x, e2))) else None
             case _       => None
         case _ => None
     case Expr.Id(x) => tenv.lift(x)
@@ -67,12 +67,20 @@ object TypeCheck:
     case Expr.IntT | Expr.BooleanT | Expr.Prop | Expr.Type | Expr.Int(_) | Expr.Bool(_) => tb
 
 
-  def interp(tb: Expr): Expr = tb match
+  def interp(env: Map[String, Expr], tb: Expr): Expr = tb match
     case Expr.App(t1, t2) =>
-      val t1a = interp(t1)
+      val t1a = interp(env, t1)
       t1a match
-        case Expr.Fun(s, k, b) => interp(subst(b, s, t2))
-        case _ => Expr.App(t1a, t2)
+        case Expr.Fun(s, k, b) => interp(env + (s -> t2), b)
+        case _ => Expr.App(t1a, interp(env, t2))
+    case Expr.Id(name) => env.lift(name) match
+      case Some(Expr.Id(name)) => tb
+      case Some(v) => interp(env, v)
+      case _ => tb
+    case Expr.Fun(x, t, e) =>
+      Expr.Fun(x, interp(env, t), interp(env + (x -> Expr.Id(x)), e))
+    case Expr.Univ(x, t, e) =>
+      Expr.Univ(x, interp(env, t), interp(env + (x -> Expr.Id(x)), e))
     case _ => tb
   
   def cbn (tb: Expr): Expr = tb match
